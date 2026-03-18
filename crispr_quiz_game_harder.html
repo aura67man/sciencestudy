@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>CRISPR Quiz Game</title>
+<style>
+body {
+    margin: 0;
+    font-family: Arial, sans-serif;
+    background: linear-gradient(135deg, #0f172a, #1e293b);
+    color: white;
+    text-align: center;
+    overflow-x: hidden;
+}
+#gameBox {
+    width: 600px;
+    margin: 60px auto;
+    padding: 30px;
+    background: #020617;
+    border-radius: 15px;
+    box-shadow: 0 0 20px #38bdf8;
+    position: relative;
+    z-index: 1;
+}
+button {
+    display: block;
+    width: 100%;
+    margin: 10px 0;
+    padding: 12px;
+    border: none;
+    border-radius: 8px;
+    background: #38bdf8;
+    color: black;
+    font-weight: bold;
+    cursor: pointer;
+    transition: transform 0.08s ease, background 0.2s ease;
+}
+button:hover {
+    background: #0ea5e9;
+    transform: scale(1.01);
+}
+#hud {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 20px;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+#flashOverlay {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    z-index: 9999;
+}
+.flashGreen {
+    background: rgba(34, 197, 94, 0.35);
+    animation: flashFade 0.35s ease;
+}
+.flashRed {
+    background: rgba(239, 68, 68, 0.4);
+    animation: flashFade 0.4s ease;
+}
+@keyframes flashFade {
+    0% { opacity: 0; }
+    20% { opacity: 1; }
+    100% { opacity: 0; }
+}
+</style>
+</head>
+<body>
+
+<div id="flashOverlay"></div>
+
+<audio id="bgMusic" loop>
+    <source src="YTDown.com_YouTube_Ode-to-Joy-Beethoven-Symphony-No9-Royal-_Media_AUGU3Son8D8_001_1080p.mp4" type="audio/mp4">
+</audio>
+
+
+<div id="gameBox">
+    <h1>🧬 CRISPR QUIZ</h1>
+
+    <div id="menu">
+        <button onclick="startGame()">Start Game</button>
+    </div>
+
+    <div id="game" style="display:none;">
+        <div id="hud">
+            <span id="score">Score: 0</span>
+            <span id="combo">Combo: x1</span>
+            <span id="timer">Time: 15</span>
+        </div>
+
+        <h2 id="question"></h2>
+        <div id="answers"></div>
+    </div>
+
+    <div id="end" style="display:none;">
+        <h2 id="finalScore"></h2>
+        <button onclick="location.reload()">Play Again</button>
+    </div>
+</div>
+
+<script>
+const originalQuestions = [
+{q:"What is the main role of DNA in living organisms?",a:["Store inherited instructions for cell function","Produce usable energy for the cell","Break down nutrients during digestion","Carry oxygen around the body"],c:0},
+{q:"Genes are best described as:",a:["Specific DNA sequences linked to traits or functions","The microscopic structures that contain a nucleus","Molecules that directly supply energy to cells","Specialized cells responsible for reproduction"],c:0},
+{q:"CRISPR technology is mainly used to:",a:["Target and alter selected DNA sequences","Measure how fast cells divide","Create brand-new organs from scratch","Copy entire chromosomes at once"],c:0},
+{q:"In plant and animal cells, most DNA is located in the:",a:["Nucleus","Cell membrane","Ribosome","Golgi apparatus"],c:0},
+{q:"In DNA, adenine normally pairs with:",a:["Thymine","Cytosine","Guanine","Uracil"],c:0},
+{q:"A mutation is best defined as:",a:["A change in the order of bases in DNA","The natural process of cell division","A protein produced by the immune system","The movement of molecules across a membrane"],c:0},
+{q:"One medical use of CRISPR is to:",a:["Modify faulty genes linked to inherited disorders","Increase the number of red blood cells instantly","Replace damaged organs without surgery","Force all cells to divide more quickly"],c:0},
+{q:"The abbreviation DNA stands for:",a:["Deoxyribonucleic acid","Dinucleic ribosomal acid","Deoxyribose nitrogen acid","Dual nucleotide arrangement"],c:0},
+{q:"Genes influence an organism's:",a:["Inherited characteristics","Daily energy intake","Number of body cells only","Age at a given time"],c:0},
+{q:"The overall structure of DNA is usually described as a:",a:["Double helix","Circular lattice","Triple spiral","Folded ribbon"],c:0},
+{q:"CRISPR is often compared to molecular scissors because it can:",a:["Cut DNA at a chosen location","Stitch proteins together inside cells","Split whole chromosomes evenly","Remove only harmful cells from tissue"],c:0},
+{q:"A major ethical concern raised about human gene editing is the possibility of:",a:["Selecting preferred traits in future children","Stopping all genetic diseases worldwide","Making humans immune to every virus","Eliminating the need for medical treatment"],c:0},
+{q:"DNA is built from repeating units called:",a:["Nucleotides","Enzymes","Lipids","Amino acids"],c:0},
+{q:"CRISPR was first discovered through research on:",a:["Bacteria","Humans","Flowering plants","Marine mammals"],c:0},
+{q:"Genes are found on:",a:["Chromosomes","Cell walls","Mitochondria only","Antibodies"],c:0},
+{q:"One risk of gene editing is:",a:["Changes occurring in unintended parts of the DNA","Cells no longer needing proteins","All edited traits being passed on safely","The complete removal of natural mutation"],c:0},
+{q:"DNA helps control cell activities by directing the production of:",a:["Proteins","Minerals","Lipids only","Glucose"],c:0},
+{q:"In agriculture, CRISPR may be used to:",a:["Develop crops with useful traits such as disease resistance","Replace soil with artificial nutrients","Make plants grow without sunlight","Turn plant cells into animal cells"],c:0},
+{q:"Each strand of DNA contains repeating units made of:",a:["A sugar, a phosphate group, and a base","A lipid, a protein, and a sugar","A base, an enzyme, and a mineral","A phosphate, a membrane, and a protein"],c:0},
+{q:"Questions about the ethics of gene editing usually focus on:",a:["Whether it should be done and where limits should be set","How quickly a gene can be copied in a lab","Which microscope gives the clearest DNA image","Why every mutation leads to disease"],c:0}
+];
+
+let questions = [];
+let score = 0;
+let combo = 1;
+let current = 0;
+let time = 15;
+let timerInterval;
+
+let correctSound = new Audio("correct.mp3");
+let wrongSound = new Audio("wrong-answer-buzzer.mp3");
+
+function playSound(sound){
+    sound.pause();
+    sound.currentTime = 0;
+    sound.play().catch(() => {});
+}
+
+function shuffleArray(array){
+    const arr = [...array];
+    for(let i = arr.length - 1; i > 0; i--){
+        const j = Math.floor(Math.random() * (i + 1));
+        [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+}
+
+function buildShuffledQuestions() {
+    questions = originalQuestions.map(q => {
+        const correctAnswer = q.a[q.c];
+        const shuffledAnswers = shuffleArray(q.a);
+        return {
+            q: q.q,
+            a: shuffledAnswers,
+            c: shuffledAnswers.indexOf(correctAnswer)
+        };
+    });
+}
+
+function flashScreen(type){
+    const overlay = document.getElementById("flashOverlay");
+    overlay.className = "";
+    void overlay.offsetWidth;
+    overlay.classList.add(type === "right" ? "flashGreen" : "flashRed");
+}
+
+function startGame(){
+    const music = document.getElementById("bgMusic");
+    if(music){
+        music.volume = 0.3;
+        music.play().catch(()=>{});
+    }
+    buildShuffledQuestions();
+    score = 0;
+    combo = 1;
+    current = 0;
+    document.getElementById("score").innerText="Score: 0";
+    document.getElementById("combo").innerText="Combo: x1";
+    document.getElementById("menu").style.display="none";
+    document.getElementById("end").style.display="none";
+    document.getElementById("game").style.display="block";
+    loadQuestion();
+}
+
+function loadQuestion(){
+    if(current >= questions.length) return endGame();
+
+    let q = questions[current];
+    document.getElementById("question").innerText = q.q;
+    let answersDiv = document.getElementById("answers");
+    answersDiv.innerHTML = "";
+
+    q.a.forEach((ans, i) => {
+        let btn = document.createElement("button");
+        btn.innerText = ans;
+        btn.onclick = () => checkAnswer(i);
+        answersDiv.appendChild(btn);
+    });
+
+    time = 15;
+    document.getElementById("timer").innerText = "Time: " + time;
+
+    clearInterval(timerInterval);
+    timerInterval = setInterval(() => {
+        time--;
+        document.getElementById("timer").innerText = "Time: " + time;
+        if(time <= 0){
+            combo = 1;
+            document.getElementById("combo").innerText = "Combo: x" + combo;
+            current++;
+            loadQuestion();
+        }
+    }, 1000);
+}
+
+function checkAnswer(i){
+    clearInterval(timerInterval);
+    let correct = questions[current].c;
+
+    if(i === correct){
+        flashScreen("right");
+        playSound(correctSound);
+        score += 10 * combo;
+        combo++;
+    } else {
+        flashScreen("wrong");
+        playSound(wrongSound);
+        combo = 1;
+    }
+
+    document.getElementById("score").innerText = "Score: " + score;
+    document.getElementById("combo").innerText = "Combo: x" + combo;
+
+    current++;
+    setTimeout(loadQuestion, 350);
+}
+
+function endGame(){
+    clearInterval(timerInterval);
+    document.getElementById("game").style.display = "none";
+    document.getElementById("end").style.display = "block";
+    document.getElementById("finalScore").innerText = "Final Score: " + score;
+}
+</script>
+
+</body>
+</html>
