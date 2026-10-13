@@ -141,26 +141,30 @@ function defaultPostits(){return[
 function defaultState(){return{v:1,books:PRESETS.map(newBook),postits:defaultPostits(),tokens:0,earned:0,hi:{},trash:[],sound:true,showPostits:true,prefs:null,welcomed:false};}
 function loadState(){
   try{const s=localStorage.getItem(SAVE_KEY);if(s){const o=JSON.parse(s);if(o&&Array.isArray(o.books))S=o;}}catch(e){S=null;}
+  normalizeState();
+}
+function normalizeState(){
   if(!S)S=defaultState();
   const d=defaultState();
   for(const k in d)if(S[k]===undefined)S[k]=d[k];
   for(const b of S.books){if(!b.pages||!b.pages.length)b.pages=[newPage()];b.cur=clamp(b.cur|0,0,b.pages.length-1);if(!PAPERS[b.paper])b.paper='lined';if(!b.diag)b.diag=[];}
   if(!S.titlePages){for(const b of S.books)if(!b.pages[0]||b.pages[0].kind!=='title'){b.pages.unshift(newPage('title'));b.cur++;}S.titlePages=true;}
 }
-let saveTimer=null,savedAt=0,savePending=false;
+let saveTimer=null,savedAt=0,savePending=false,saveFailed=false;
 function markDirty(){savePending=true;clearTimeout(saveTimer);saveTimer=setTimeout(saveNow,450);}
 function saveNow(){
   clearTimeout(saveTimer);saveTimer=null;
   if(!savePending)return;savePending=false;
   S.prefs=T;
-  try{localStorage.setItem(SAVE_KEY,JSON.stringify(S));savedAt=performance.now();}
+  const json=JSON.stringify(S);
+  try{localStorage.setItem(SAVE_KEY,json);savedAt=performance.now();saveFailed=false;storeUsed=measureUsed();checkStorage();}
   catch(e){
-    // try trimming the trash before giving up
-    if(S.trash.length){S.trash.length=Math.floor(S.trash.length/2);try{localStorage.setItem(SAVE_KEY,JSON.stringify(S));savedAt=performance.now();toast('🧹 Storage was full, so old trash was emptied.');return;}catch(e2){}}
-    toast('⚠️ Storage is full! Use smaller images or empty the trash.',4);
+    // nothing is thrown away automatically: everything stays in memory and the user is asked to back up
+    saveFailed=true;storeUsed=Math.max(storeUsed,STORE_CAP);
+    if(!modal||modal.title!=='💾 Storage & backups')openStorageModal('full');SFX.nope();
   }
 }
-addEventListener('beforeunload',saveNow);
+addEventListener('beforeunload',e=>{saveNow();if(saveFailed){e.preventDefault();e.returnValue='';}});
 document.addEventListener('visibilitychange',()=>{if(document.hidden)saveNow();});
 
 /* ---------- tool preferences ---------- */
@@ -889,7 +893,10 @@ function renderDesk(skip){
   // chips
   const cx0=D.side?D.decor.x+18:W-100,cy0=D.side?22:16;
   btn(cx0,cy0,D.side?126:84,36,`🎮 ${S.tokens} token${S.tokens===1?'':'s'}`.replace(D.side?'':' tokens','').replace(D.side?'':' token',''),openDevice,{id:'tokchip',tip:'Game tokens — play the reward arcade',fs:14,bg:S.tokens?'#ffe08a':'#fdf6e3'});
-  btn(D.side?cx0+134:W-100,D.side?cy0:cy0+42,D.side?44:84,36,S.sound?'🔊':'🔇',()=>{S.sound=!S.sound;markDirty();ensureAudio();SFX.tap();},{id:'snd',tip:S.sound?'Mute sounds':'Unmute sounds',fs:16});
+  {const pct=storePct(),bg=pct>=.9?'#ef9a9a':pct>=.75?'#ffcc80':'#fdf6e3';
+   if(D.side)btn(cx0,cy0+42,178,30,`💾 Storage ${Math.round(pct*100)}% · backups`,()=>openStorageModal(),{id:'store',bg,fs:12,tip:'Storage space & backups'});
+   else btn(W-56,cy0+42,40,36,'💾',()=>openStorageModal(),{id:'store',bg,fs:16,tip:'Storage & backups'});}
+  btn(D.side?cx0+134:W-100,D.side?cy0:cy0+42,D.side?44:40,36,S.sound?'🔊':'🔇',()=>{S.sound=!S.sound;markDirty();ensureAudio();SFX.tap();},{id:'snd',tip:S.sound?'Mute sounds':'Unmute sounds',fs:16});
 }
 function deskScrollGesture(D){return(x,y)=>{const s0=deskScroll;return{move(nx,ny){deskScroll=clamp(s0-(ny-y),0,D.maxScroll);}};};}
 function bookGesture(it,D){return(x,y)=>{
@@ -900,6 +907,8 @@ function bookMenu(b,x,y,it){
   openMenu(x,y,[
     {label:'📖  Open',fn:()=>openBook(b,it)},
     {label:'🎨  Customise / rename…',fn:()=>openNotebookModal(b)},
+    {label:'📕  Download as PDF',fn:()=>downloadBookPDF(b)},
+    {label:'💾  Back up notebook (.json)',fn:()=>downloadBookBackup(b)},
     {label:'🗑  Throw notebook in the trash',danger:true,fn:()=>confirmModal('Throw it away?',`"${b.title}" and all ${b.pages.length} page(s) will go in the trash can. You can restore it from there.`,'Throw away',()=>trashBook(b,it))}
   ],b.title);
 }
@@ -1205,10 +1214,12 @@ function activePage(){return curBook?curBook.pages[activeIdx]||curBook.pages[cur
 function drawBottomBar(L){
   const b=curBook,y=H-50,h=40,nar=W<700,tiny=W<560,fs=nar?13:14;
   btn(10,y,nar?46:104,h,nar?'🏠':'🏠 Desk',closeBook,{id:'bb:desk',tip:'Close the notebook & go back to the desk'});
+  const dlIdx=()=>clamp(activeIdx,0,b.pages.length-1);
+  if(!tiny)btn(nar?60:120,y,nar?40:46,h,'⬇️',(x)=>downloadMenu(x-40,H-250,b,dlIdx()),{id:'bb:dl',tip:'Download as PDF / picture, or back up',fs:16});
   const lbl=tiny?`${b.cur+1} / ${b.pages.length}`:L.spread?`Pages ${L.slots[0].idx+1}${L.slots[1].page?'–'+(L.slots[1].idx+1):''} of ${b.pages.length}`:`Page ${b.cur+1} of ${b.pages.length}`;
   const nb=tiny?34:38,ab=tiny?36:nar?40:92,lw=Math.max(tiny?46:nar?84:130,measure(lbl,`bold ${fs}px ${FONTS.neat}`)+(tiny?12:20)),cw=nb*2+lw+ab+12;
   const rightW=tiny?(56+48+46):nar?(56+44+50+(L.pc===0?46:0)):262;
-  const cx=nar?Math.max(60,60+((W-10-rightW)-60-cw)/2):Math.max(124,(W-cw)/2);
+  const lx=tiny?60:nar?106:172,cx=nar?Math.max(lx,lx+((W-10-rightW)-lx-cw)/2):Math.max(lx,(W-cw)/2);
   btn(cx,y,nb,h,'◀',prevPage,{id:'bb:prev',tip:'Previous page (←)'});
   ctx.fillStyle='rgba(30,18,10,.75)';rr(ctx,cx+nb+3,y,lw,h,12);ctx.fill();ctx.fillStyle='#fdf6e3';ctx.font=`bold ${fs}px ${FONTS.neat}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(lbl,cx+nb+3+lw/2,y+h/2+1);
   btn(cx+nb+6+lw,y,nb,h,'▶',nextPage,{id:'bb:next',tip:'Next page (→)'});
@@ -1218,9 +1229,10 @@ function drawBottomBar(L){
   const th=hoverId==='bb:trash'?1:0;drawTrashCan(rx+tw2/2,y+h/2-4,tiny?.38:.42,S.trash.length,th);hit(rx,y-8,tw2,h+8,{id:'bb:trash',cursor:'pointer',tip:'Trash can',click:openTrashModal});
   if(!tiny){rx-=nar?44:110;btn(rx,y,nar?40:104,h,nar?'📌':'📌 Post-it',()=>postitMenu(),{id:'bb:postit',tip:'Add a post-it reminder'});}
   rx-=tiny?48:nar?50:96;ctx.save();ctx.translate(0,-Math.abs(tb));btn(rx,y,tiny?44:nar?46:90,h,`🎮 ${S.tokens}`,openDevice,{id:'bb:tok',tip:'Play the reward arcade',bg:S.tokens?'#ffe08a':'#fdf6e3',fs:tiny?12:undefined});ctx.restore();
-  if(L.pc===0){rx-=46;btn(rx,y,40,h,'📌',()=>openMenu(W-230,H-200,[
+  if(L.pc===0){rx-=46;btn(rx,y,40,h,tiny?'⋯':'📌',()=>openMenu(W-260,H-280,[
+      ...(tiny?[{label:'📕  Download notebook (PDF)',fn:()=>downloadBookPDF(b)},{label:`🖼️  Download page ${dlIdx()+1} as a picture`,fn:()=>downloadPagePNG(b,dlIdx())},{label:'💾  Storage & backups…',fn:()=>openStorageModal()}]:[]),
       {label:S.showPostitsNarrow?'🙈  Hide post-its':'🗒️  Show post-its',fn:()=>{S.showPostitsNarrow=!S.showPostitsNarrow;markDirty();}},
-      {label:'➕  Add a post-it…',fn:()=>setTimeout(postitMenu,0)}],'Post-its'),{id:'bb:hide',tip:'Post-its'});}
+      {label:'➕  Add a post-it…',fn:()=>setTimeout(postitMenu,0)}],tiny?'More':'Post-its'),{id:'bb:hide',tip:tiny?'More options':'Post-its'});}
 }
 
 /* ---------- page interaction ---------- */
@@ -1867,6 +1879,107 @@ function renderDevice(dt){
 }
 
 /* =====================================================================
+   DOWNLOADS (PDF / PNG / backups) + STORAGE METER
+   ===================================================================== */
+let busy=false;
+function safeName(t){return(t||'notebook').replace(/[^\w\- ]+/g,'').trim().replace(/\s+/g,'-')||'notebook';}
+function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},5000);}
+function preloadImages(b){const ps=[];for(const p of b.pages)for(const it of p.items)if(it.type==='image'&&!getImg(it)){const im=IMGS.get(it.id);ps.push(new Promise(r=>{im.addEventListener('load',r,{once:true});im.addEventListener('error',r,{once:true});setTimeout(r,4000);}));}return Promise.all(ps);}
+function renderPageExport(b,p,idx,sc){
+  const c=mkCanvas(PW*sc,PH*sc),g=c.getContext('2d');g.scale(sc,sc);drawPaper(g,pagePaper(b,p),hashStr(p.id),b);
+  for(const it of p.items)drawItem(g,it,b);
+  g.font=`bold 20px ${FONTS.neat}`;g.fillStyle='rgba(90,70,50,.6)';g.textAlign='right';g.textBaseline='alphabetic';g.fillText(String(idx+1),PW-40,PH-24);
+  g.textAlign='left';g.fillText(b.title,40,PH-24);return c;
+}
+function renderCoverExport(b,sc){const c=mkCanvas(PW*sc,PH*sc),g=c.getContext('2d');g.fillStyle='#fff';g.fillRect(0,0,c.width,c.height);g.scale(PW*sc/300,PH*sc/390);drawCover(g,b);return c;}
+function canvasJpeg(c){return new Promise(r=>c.toBlob(bl=>bl.arrayBuffer().then(ab=>r({bytes:new Uint8Array(ab),w:c.width,h:c.height})),'image/jpeg',.88));}
+function buildPDF(imgs){
+  // a tiny PDF writer: one full-bleed JPEG per page
+  const enc=new TextEncoder(),parts=[],off=[];let len=0;
+  const push=x=>{const b=typeof x==='string'?enc.encode(x):x;parts.push(b);len+=b.length;};
+  const obj=(id,fn)=>{off[id]=len;push(`${id} 0 obj\n`);fn();push('\nendobj\n');};
+  const PWpt=595,PHpt=773.5,n=imgs.length,kids=[];for(let i=0;i<n;i++)kids.push(`${3+i*3} 0 R`);
+  push('%PDF-1.4\n%âãÏÓ\n');
+  obj(1,()=>push('<< /Type /Catalog /Pages 2 0 R >>'));
+  obj(2,()=>push(`<< /Type /Pages /Kids [${kids.join(' ')}] /Count ${n} >>`));
+  imgs.forEach((im,i)=>{const pid=3+i*3,cid=pid+1,iid=pid+2,cs=`q ${PWpt} 0 0 ${PHpt} 0 0 cm /Im0 Do Q`;
+    obj(pid,()=>push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${PWpt} ${PHpt}] /Resources << /XObject << /Im0 ${iid} 0 R >> >> /Contents ${cid} 0 R >>`));
+    obj(cid,()=>push(`<< /Length ${cs.length} >>\nstream\n${cs}\nendstream`));
+    obj(iid,()=>{push(`<< /Type /XObject /Subtype /Image /Width ${im.w} /Height ${im.h} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${im.bytes.length} >>\nstream\n`);push(im.bytes);push('\nendstream');});});
+  const max=2+n*3,xref=len;let x=`xref\n0 ${max+1}\n0000000000 65535 f \n`;for(let i=1;i<=max;i++)x+=String(off[i]).padStart(10,'0')+' 00000 n \n';
+  push(x+`trailer\n<< /Size ${max+1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`);
+  return new Blob(parts,{type:'application/pdf'});
+}
+async function downloadBookPDF(b){
+  if(busy)return;busy=true;endEdit();
+  try{toast(`📕 Making a PDF of "${b.title}"…`,2);await preloadImages(b);
+    const imgs=[await canvasJpeg(renderCoverExport(b,1.2))];
+    for(let i=0;i<b.pages.length;i++){imgs.push(await canvasJpeg(renderPageExport(b,b.pages[i],i,1.2)));await new Promise(r=>setTimeout(r,0));}
+    downloadBlob(buildPDF(imgs),safeName(b.title)+'.pdf');toast(`✅ Downloaded "${b.title}" (${b.pages.length} pages + cover)`,3);SFX.win();
+  }catch(e){console.error(e);toast('⚠️ Sorry, the PDF could not be made.',3);}busy=false;
+}
+async function downloadPagePNG(b,idx){
+  const p=b.pages[idx];if(!p)return;endEdit();await preloadImages(b);
+  renderPageExport(b,p,idx,1.5).toBlob(bl=>{downloadBlob(bl,`${safeName(b.title)}-page-${idx+1}.png`);toast(`🖼️ Page ${idx+1} downloaded`);},'image/png');
+}
+function downloadBookBackup(b){saveNow();downloadBlob(new Blob([JSON.stringify({studyDeskBook:1,saved:Date.now(),book:b})],{type:'application/json'}),safeName(b.title)+'-backup.json');toast(`💾 Backup of "${b.title}" downloaded`);}
+function downloadAllBackup(){saveNow();S.lastBackup=Date.now();markDirty();const d=new Date().toISOString().slice(0,10);
+  downloadBlob(new Blob([JSON.stringify({studyDeskBackup:1,saved:Date.now(),state:S})],{type:'application/json'}),`study-desk-backup-${d}.json`);toast('💾 Everything backed up to your downloads folder',3);}
+function downloadMenu(x,y,b,idx){openMenu(x,y,[
+  {label:'📕  Download whole notebook (PDF)',fn:()=>downloadBookPDF(b)},
+  ...(idx!=null?[{label:`🖼️  Download page ${idx+1} as a picture`,fn:()=>downloadPagePNG(b,idx)}]:[]),
+  {label:'💾  Back up this notebook (.json)',fn:()=>downloadBookBackup(b)},
+  {label:'📊  Storage & backups…',fn:()=>openStorageModal()}],'Download');}
+// restore from a backup file
+const FJ=document.createElement('input');FJ.type='file';FJ.accept='.json,application/json';FJ.style.cssText='position:fixed;left:-9999px';document.body.appendChild(FJ);
+function pickBackup(){FJ.value='';FJ.click();}
+FJ.addEventListener('change',()=>{const f=FJ.files&&FJ.files[0];if(!f)return;const rd=new FileReader();rd.onload=()=>{
+  let o;try{o=JSON.parse(rd.result);}catch(e){toast('⚠️ That file is not a Study Desk backup');return;}
+  if(o&&o.studyDeskBook&&o.book&&Array.isArray(o.book.pages)){const bk=o.book;if(S.books.some(x=>x.id===bk.id))bk.id=uid();S.books.push(bk);normalizeState();markDirty();toast(`📂 "${bk.title}" added to your desk`,3);SFX.pop();}
+  else if(o&&o.studyDeskBackup&&o.state&&Array.isArray(o.state.books)){
+    confirmModal('Restore everything?',`This replaces everything on this desk with the backup from ${new Date(o.saved||Date.now()).toLocaleString()} (${o.state.books.length} notebooks).`,'Restore',()=>{
+      S=o.state;normalizeState();PC.clear();coverCache.clear();UNDO.clear();IMGS.clear();sel=null;savePending=true;saveNow();toast('📂 Backup restored!',3);SFX.win();});}
+  else toast('⚠️ That file is not a Study Desk backup');};rd.readAsText(f);});
+
+/* storage meter */
+let STORE_CAP=5e6,storeUsed=0,storeWarned=0;
+function measureUsed(){let n=0;try{for(let i=0;i<localStorage.length;i++){const k=localStorage.key(i);n+=k.length+(localStorage.getItem(k)||'').length;}}catch(e){}return n;}
+function probeCapacity(){
+  try{const c=sessionStorage.getItem('sdCap');if(c){STORE_CAP=+c;return;}}catch(e){}
+  const used=measureUsed(),k='__sdProbe';let lo=0,hi=12e6;
+  try{while(hi-lo>50000){const mid=Math.floor((lo+hi)/2);try{localStorage.setItem(k,'x'.repeat(mid));lo=mid;}catch(e){hi=mid;}}}finally{try{localStorage.removeItem(k);}catch(e){}}
+  STORE_CAP=Math.max(1e6,used+lo);try{sessionStorage.setItem('sdCap',String(STORE_CAP));}catch(e){}
+}
+function storePct(){return clamp(storeUsed/STORE_CAP,0,1);}
+const fmtMB=n=>(n*2/1048576).toFixed(n*2<1048576?2:1)+' MB';   // JS strings are ~2 bytes per character
+function checkStorage(){
+  const pct=storePct();
+  if(pct<.7)storeWarned=0;
+  else if(pct>=.9&&storeWarned<2){storeWarned=2;openStorageModal('almost');}
+  else if(pct>=.75&&storeWarned<1){storeWarned=1;toast(`⚠️ Your desk storage is ${Math.round(pct*100)}% full — download a backup soon!`,5);SFX.remind();}
+}
+function openStorageModal(reason){
+  SFX.tap();const sizes=S.books.map(b=>({b,n:JSON.stringify(b).length})).sort((a,c)=>c.n-a.n).slice(0,4),trashN=JSON.stringify(S.trash).length;
+  modal={title:'💾 Storage & backups',w:540,h:Math.min(reason?520:480,H-20),dismiss:reason!=='full',draw(x,y,w,h){
+    const pct=storePct(),col=pct>=.9?'#e53935':pct>=.75?'#fb8c00':'#43a047';let yy=y+58;
+    ctx.textAlign='left';ctx.textBaseline='middle';
+    if(reason){ctx.fillStyle='#c62828';ctx.font=`bold 15px ${FONTS.neat}`;yy=wrapScreen(reason==='full'?'⚠️ Your desk is FULL and your latest changes could not be saved! Download a backup right now, then free up some space.':'⚠️ Your desk is almost full! Download a backup so you don\'t lose anything, then free up some space.',x+20,yy,w-40,20)+4;}
+    ctx.fillStyle='rgba(0,0,0,.08)';rr(ctx,x+20,yy,w-40,18,9);ctx.fill();ctx.fillStyle=col;rr(ctx,x+20,yy,Math.max(18,(w-40)*pct),18,9);ctx.fill();
+    ctx.fillStyle='#3b2a1a';ctx.font=`bold 14px ${FONTS.neat}`;ctx.fillText(`${Math.round(pct*100)}% used · ${fmtMB(storeUsed)} of about ${fmtMB(STORE_CAP)}`,x+20,yy+34);yy+=58;
+    ctx.font=`bold 12px ${FONTS.neat}`;ctx.fillStyle='#8a7560';ctx.fillText('BIGGEST NOTEBOOKS (pictures take the most room)',x+20,yy);yy+=20;
+    ctx.font=`14px ${FONTS.neat}`;for(const s of sizes){ctx.fillStyle='#3b2a1a';ctx.fillText(`${s.b.icon} ${s.b.title}`,x+28,yy,w-200);ctx.fillStyle='#8a7560';ctx.textAlign='right';ctx.fillText(fmtMB(s.n),x+w-150,yy);ctx.textAlign='left';
+      btn(x+w-140,yy-12,118,24,'⬇ PDF',()=>{closeModal();downloadBookPDF(s.b);},{fs:12,id:'spdf'+s.b.id});yy+=28;}
+    ctx.fillStyle='#3b2a1a';ctx.fillText(`🗑 Trash (${S.trash.length} item${S.trash.length===1?'':'s'})`,x+28,yy);ctx.fillStyle='#8a7560';ctx.textAlign='right';ctx.fillText(fmtMB(trashN),x+w-150,yy);ctx.textAlign='left';
+    if(S.trash.length)btn(x+w-140,yy-12,118,24,'🧹 Empty trash',()=>confirmModal('Empty the trash?','Everything in the trash will be gone forever.','Empty it',()=>{S.trash=[];markDirty();toast('🧹 Trash emptied');}),{fs:12,id:'sempty'});
+    yy+=30;ctx.fillStyle='#8a7560';ctx.font=`12px ${FONTS.neat}`;ctx.fillText(S.lastBackup?`Last full backup: ${timeAgo(S.lastBackup)}`:'You have never made a full backup.',x+20,yy);
+    const bw=(w-60)/3;
+    btn(x+20,y+h-56,bw,40,'💾 Back up all',downloadAllBackup,{bg:'#f6a821',color:'#fff',fs:14,id:'sbak'});
+    btn(x+30+bw,y+h-56,bw,40,'📂 Restore…',pickBackup,{fs:14,id:'sres',tip:'Load a .json backup (a whole desk or one notebook)'});
+    btn(x+40+bw*2,y+h-56,bw,40,'Close',closeModal,{fs:14,id:'sclose'});
+  }};
+}
+
+/* =====================================================================
    INPUT
    ===================================================================== */
 let lastPtrType='mouse',lastCursor='',wheelAcc=0,lastWheel=0;
@@ -1986,6 +2099,7 @@ addEventListener('resize',resize);
 /* ---------- boot ---------- */
 loadState();
 if(S.prefs){const d=T,p=S.prefs;T={...d,...p,color:{...d.color,...(p.color||{})},size:{...d.size,...(p.size||{})}};if(!TOOLS.some(t=>t[0]===T.tool)||T.tool==='image')T.tool='text';}
+storeUsed=measureUsed();setTimeout(()=>{probeCapacity();checkStorage();},1500);
 resize();
 for(const p of S.postits)remindLast.set(p.id,Date.now());
 if(!S.welcomed){S.welcomed=true;markDirty();setTimeout(()=>toast('👋 Welcome to your study desk! Tap a notebook to open it.',3.6),500);setTimeout(()=>toast('🎮 Every finished page of notes earns a game token',3.6),2400);}
