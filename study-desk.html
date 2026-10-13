@@ -116,9 +116,10 @@ const PAPERS={
  code:{n:'Code',bg:'#f6f8fa',lh:40,top:120,ml:90,snap:1,font:'type'},
  legal:{n:'Legal pad',bg:'#fff6a8',lh:40,top:140,ml:130,snap:1},
  cornell:{n:'Cornell notes',bg:'#fffef9',lh:40,top:160,ml:300,snap:1},
+ title:{n:'Title page',bg:'#fffdf6',lh:60,top:600,ml:130,snap:1,font:'serif',hidden:1},
  primary:{n:'Handwriting',bg:'#fffef7',lh:90,top:160,ml:70,snap:1,font:'neat',dy:0}
 };
-const PAPER_KEYS=Object.keys(PAPERS);
+const PAPER_KEYS=Object.keys(PAPERS).filter(k=>!PAPERS[k].hidden);
 const COVERS=['composition','spiral','hard','leather','kraft','stripes','velvet','dots','carbon','legalpad'];
 const COVER_NAMES={composition:'Composition',spiral:'Spiral',hard:'Hardcover',leather:'Leather',kraft:'Kraft',stripes:'Stripes',velvet:'Velvet',dots:'Polka dots',carbon:'Carbon',legalpad:'Legal pad'};
 const TSTYLES=['label','tape','stamp','gold','plain','chalk'];
@@ -129,8 +130,9 @@ const COVER_COLORS=['#222222','#2f6fd6','#2e9e5b','#7a3b1c','#e2463b','#6c3fc4',
 /* ---------- persisted state ---------- */
 const SAVE_KEY='studyDesk.v1';
 let S=null;
-function newPage(){return{id:uid(),items:[],done:false};}
-function newBook(p){return{id:uid(),title:p.title,paper:p.paper,cover:p.cover,color:p.color,font:p.font,tstyle:p.tstyle,icon:p.icon||'📓',diag:(p.diag||[]).slice(),pages:[newPage()],cur:0};}
+function newPage(kind){const p={id:uid(),items:[],done:false};if(kind&&kind!=='normal')p.kind=kind;return p;}
+function pagePaper(b,p){return p&&p.kind==='title'?'title':p&&p.kind==='cornell'?'cornell':b.paper;}
+function newBook(p){return{id:uid(),title:p.title,paper:p.paper,cover:p.cover,color:p.color,font:p.font,tstyle:p.tstyle,icon:p.icon||'📓',diag:(p.diag||[]).slice(),pages:[newPage('title'),newPage()],cur:0};}
 function defaultPostits(){return[
  {id:uid(),text:'💧 Drink some water!',color:'#fff176',fx:.07,fy:.32,rot:-4,remind:30},
  {id:uid(),text:'🌳 Take an outside break',color:'#a5d6a7',fx:.93,fy:.3,rot:3,remind:60},
@@ -143,6 +145,7 @@ function loadState(){
   const d=defaultState();
   for(const k in d)if(S[k]===undefined)S[k]=d[k];
   for(const b of S.books){if(!b.pages||!b.pages.length)b.pages=[newPage()];b.cur=clamp(b.cur|0,0,b.pages.length-1);if(!PAPERS[b.paper])b.paper='lined';if(!b.diag)b.diag=[];}
+  if(!S.titlePages){for(const b of S.books)if(!b.pages[0]||b.pages[0].kind!=='title'){b.pages.unshift(newPage('title'));b.cur++;}S.titlePages=true;}
 }
 let saveTimer=null,savedAt=0,savePending=false;
 function markDirty(){savePending=true;clearTimeout(saveTimer);saveTimer=setTimeout(saveNow,450);}
@@ -216,7 +219,7 @@ function fitText(c,text,fam,maxW,maxSize,minSize,weight){
 function fitLines(fit,x,y,fn){const lh=fit.size*1.08,y0=y-(fit.lines.length-1)*lh/2;fit.lines.forEach((l,i)=>fn(l,x,y0+i*lh));}
 
 /* ---------- paper ---------- */
-function drawPaper(c,key,seed){
+function drawPaper(c,key,seed,book){
   const P=PAPERS[key]||PAPERS.lined,r=mulberry(seed||7),END=1236;
   c.fillStyle=P.bg;c.fillRect(0,0,PW,PH);
   const L=(y,col,w)=>{c.strokeStyle=col;c.lineWidth=w;c.beginPath();c.moveTo(0,y);c.lineTo(PW,y);c.stroke();};
@@ -253,6 +256,16 @@ function drawPaper(c,key,seed){
       for(let y=P.top;y<=1000;y+=P.lh)L(y,'#c5d8ea',1.6);V(280,'#e57373',2.5,84,1040);L(1040,'#7fa6c9',3);
       label('Cues / Questions',20,118,'#e08a8a',18);label('Notes',300,118,'#8aa7c0',18);label('Summary',20,1074,'#8aa7c0',20);
       for(let y=1100;y<=END;y+=P.lh)L(y,'#c5d8ea',1.6);break;
+    case 'title':{const bk=book||{title:'My Notes',icon:'📓',color:'#555555',font:'serif'},col=bk.color;
+      c.strokeStyle=col;c.lineWidth=6;c.strokeRect(40,40,PW-80,PH-80);c.lineWidth=1.5;c.strokeRect(56,56,PW-112,PH-112);
+      c.fillStyle=col;[[56,56],[PW-56,56],[56,PH-56],[PW-56,PH-56]].forEach(([x,y])=>{c.save();c.translate(x,y);c.rotate(Math.PI/4);c.fillRect(-9,-9,18,18);c.restore();});
+      c.textAlign='center';c.textBaseline='middle';c.font=`110px ${EMO}`;c.fillText(bk.icon||'📓',PW/2,215);
+      c.fillStyle='#2b1d10';const f=fitText(c,bk.title||'Notes',FONTS[bk.font]||FONTS.serif,760,92,30);fitLines(f,PW/2,370,(l,x,y)=>c.fillText(l,x,y));
+      c.strokeStyle=col;c.lineWidth=2;c.beginPath();c.moveTo(250,445);c.lineTo(750,445);c.stroke();c.beginPath();c.arc(PW/2,445,7,0,7);c.fillStyle=col;c.fill();
+      c.font=`bold 22px ${FONTS.neat}`;c.fillStyle=rgba(col,.7);c.fillText('T O P I C   /   U N I T',PW/2,520);
+      c.setLineDash([3,9]);for(let y=P.top;y<=P.top+P.lh*4;y+=P.lh)L(y,'rgba(0,0,0,.18)',2);c.setLineDash([]);
+      c.textAlign='left';c.font=`24px ${FONTS.neat}`;c.fillStyle='#8a7560';[['Name',1010],['Class',1080],['Date',1150]].forEach(([t,y])=>{c.fillText(t,150,y);c.strokeStyle='rgba(0,0,0,.25)';c.lineWidth=1.5;c.beginPath();c.moveTo(250,y+8);c.lineTo(850,y+8);c.stroke();});
+      break;}
     case 'primary':for(let b=P.top;b<=END;b+=P.lh){L(b-60,'#7ea7dc',2);c.setLineDash([14,10]);L(b-30,'#f2a0a6',2);c.setLineDash([]);L(b,'#5b8fd6',2.5);}V(P.ml-14,'#ef9a9a',2);break;
   }
   c.textAlign='left';
@@ -548,7 +561,8 @@ function pageCache(b,p,w,h){
   if(!e||e.cw!==cw||e.ch!==ch){e={cw,ch,bg:mkCanvas(cw,ch),ink:mkCanvas(cw,ch),bgKey:null,inkOk:false};}
   PC.delete(p.id);PC.set(p.id,e);
   while(PC.size>14){const k=PC.keys().next().value;PC.delete(k);}
-  if(e.bgKey!==b.paper){const g=e.bg.getContext('2d');g.setTransform(cw/PW,0,0,ch/PH,0,0);drawPaper(g,b.paper,hashStr(p.id));e.bgKey=b.paper;}
+  const pk=pagePaper(b,p),bk=pk==='title'?pk+b.title+b.icon+b.color+b.font:pk;
+  if(e.bgKey!==bk){const g=e.bg.getContext('2d');g.setTransform(cw/PW,0,0,ch/PH,0,0);drawPaper(g,pk,hashStr(p.id),b);e.bgKey=bk;}
   if(!e.inkOk){const g=e.ink.getContext('2d');g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,cw,ch);g.setTransform(cw/PW,0,0,ch/PH,0,0);
     for(const it of p.items)if(it!==hiddenItem)drawItem(g,it,b);e.inkOk=true;}
   return e;
@@ -630,7 +644,7 @@ function pageStats(p){
 function pageScore(p){return pageStats(p).score;}
 let tokenBounce=0;
 function checkReward(b,p){
-  if(p.done)return;
+  if(p.done||p.kind==='title')return;
   if(pageScore(p)>=GOAL){p.done=true;S.tokens++;S.earned++;tokenBounce=1;markDirty();
     toast('🎉 Page complete! You earned a game token 🎮',3.2);SFX.win();
     const L=bookLayout(),sl=L.slots.find(s=>s.page===p);const cx=sl?sl.r.x+sl.r.w/2:W/2,cy=sl?sl.r.y+sl.r.h*.9:H/2;confetti(cx,cy,90);}
@@ -928,7 +942,7 @@ function openNotebookModal(b){
   const nameF={key:'nbname',get:()=>d.title,set:v=>{d.title=v;},max:28,onEnter:()=>save()};
   const cyc=(arr,key,dir)=>{const i=arr.indexOf(d[key]);d[key]=arr[(i+dir+arr.length)%arr.length];SFX.tap();};
   function save(){const title=(d.title||'').trim()||'Untitled';
-    if(b){const pc=b.paper!==d.paper;Object.assign(b,{title,paper:d.paper,cover:d.cover,color:d.color,font:d.font,tstyle:d.tstyle,icon:d.icon});if(pc)for(const p of b.pages){const e=PC.get(p.id);if(e)e.bgKey=null;}toast('✨ Notebook updated');}
+    if(b){const pc=true;Object.assign(b,{title,paper:d.paper,cover:d.cover,color:d.color,font:d.font,tstyle:d.tstyle,icon:d.icon});if(pc)for(const p of b.pages){const e=PC.get(p.id);if(e)e.bgKey=null;}toast('✨ Notebook updated');}
     else{const nb=newBook({...d,title});S.books.push(nb);toast(`📓 "${title}" added to your desk`);setTimeout(()=>{const D=deskLayout();deskScroll=D.maxScroll;},0);}
     markDirty();closeModal();SFX.pop();}
   modal={title:b?'🎨 Customise notebook':'📓 New notebook',w:600,h:Math.min(500,H-20),draw(x,y,w,h){
@@ -1055,7 +1069,11 @@ function goPage(nc){
 }
 function nextPage(){const b=curBook,L=bookLayout();if(L.spread){const sp=Math.floor(b.cur/2);if((sp+1)*2<b.pages.length)goPage((sp+1)*2);else SFX.nope();}else if(b.cur+1<b.pages.length)goPage(b.cur+1);else SFX.nope();}
 function prevPage(){const b=curBook,L=bookLayout();if(L.spread){const sp=Math.floor(b.cur/2);if(sp>0)goPage((sp-1)*2);else SFX.nope();}else if(b.cur>0)goPage(b.cur-1);else SFX.nope();}
-function addPage(){const b=curBook;b.pages.push(newPage());markDirty();const n=b.pages.length-1;activeIdx=n;SFX.pop();toast(`📄 Page ${n+1} added`);goPage(n);}
+function addPage(kind){const b=curBook;b.pages.push(newPage(kind));markDirty();const n=b.pages.length-1;activeIdx=n;SFX.pop();toast(`${kind==='title'?'📘 Title':kind==='cornell'?'📝 Cornell':'📄'} page ${n+1} added`);goPage(n);}
+function addPageMenu(x,y){const b=curBook;openMenu((x||W/2)-120,(y||H)-200,[
+  {label:`📄  Normal page (${PAPERS[b.paper].n.toLowerCase()})`,fn:()=>addPage('normal')},
+  {label:'📝  Cornell notes page',fn:()=>addPage('cornell')},
+  {label:'📘  Title page (topic divider)',fn:()=>addPage('title')}],'Add a page');}
 function trashPageAt(slot){
   const b=curBook,p=slot.page,r=slot.r;if(!p)return;endEdit();sel=null;
   const e=pageCache(b,p,r.w,r.h),img=mkCanvas(e.cw,e.ch),g=img.getContext('2d');g.drawImage(e.bg,0,0);g.drawImage(e.ink,0,0);
@@ -1126,14 +1144,14 @@ function toolOptions(){
   return o;
 }
 function optWidth(c,bs){switch(c.t){case 'color':return bs*.82;case 'size':return bs*.85;case 'sep':return 10;case 'font':return bs*1.25;case 'tsize':return bs*.85;case 'shape':return bs;case 'sticker':return bs;case 'diagram':return bs*1.1;case 'label':return measure(c.s,`bold 13px ${FONTS.neat}`)+14;case 'btn':return measure(c.s,`bold 13px ${FONTS.neat}`)+24;}return bs;}
-function isOptActive(c){switch(c.t){case 'color':return(edit&&c.key==='text')?edit.item.color===c.c:T.color[c.key]===c.c;case 'size':return T.size[c.key]===c.i;case 'font':return(edit?edit.item.font:(T.font||PAPERS[curBook.paper].font||'hand'))===c.k;case 'tsize':return T.tsize===c.i;case 'shape':return T.shape===c.k;case 'sticker':return T.sticker===c.ch;case 'diagram':return T.diagram===c.k;}return false;}
+function isOptActive(c){switch(c.t){case 'color':return(edit&&c.key==='text')?edit.item.color===c.c:T.color[c.key]===c.c;case 'size':return T.size[c.key]===c.i;case 'font':return(edit?edit.item.font:(T.font||PAPERS[pagePaper(curBook,activePage())].font||'hand'))===c.k;case 'tsize':return T.tsize===c.i;case 'shape':return T.shape===c.k;case 'sticker':return T.sticker===c.ch;case 'diagram':return T.diagram===c.k;}return false;}
 function clickOpt(c){
   SFX.tap();
   switch(c.t){
     case 'color':T.color[c.key]=c.c;if(edit&&c.key==='text'){edit.item.color=c.c;}break;
     case 'size':T.size[c.key]=c.i;break;
     case 'font':T.font=c.k;if(edit){edit.item.font=c.k;}break;
-    case 'tsize':T.tsize=c.i;if(edit){const ts=textStyle(curBook);edit.item.size=ts.size;edit.item.lh=ts.lh;}break;
+    case 'tsize':T.tsize=c.i;if(edit){const ts=textStyle(curBook,edit.p);edit.item.size=ts.size;edit.item.lh=ts.lh;}break;
     case 'shape':T.shape=c.k;break;
     case 'sticker':T.sticker=c.ch;break;
     case 'diagram':T.diagram=c.k;toast(`Tap the page to place a ${DIAGRAMS[c.k]}`,1.6);break;
@@ -1194,7 +1212,7 @@ function drawBottomBar(L){
   btn(cx,y,nb,h,'◀',prevPage,{id:'bb:prev',tip:'Previous page (←)'});
   ctx.fillStyle='rgba(30,18,10,.75)';rr(ctx,cx+nb+3,y,lw,h,12);ctx.fill();ctx.fillStyle='#fdf6e3';ctx.font=`bold ${fs}px ${FONTS.neat}`;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(lbl,cx+nb+3+lw/2,y+h/2+1);
   btn(cx+nb+6+lw,y,nb,h,'▶',nextPage,{id:'bb:next',tip:'Next page (→)'});
-  btn(cx+nb*2+10+lw,y,ab,h,ab<60?'＋':'＋ Page',addPage,{id:'bb:add',tip:'Add a new page'});
+  btn(cx+nb*2+10+lw,y,ab,h,ab<60?'＋':'＋ Page',addPageMenu,{id:'bb:add',tip:'Add a page: normal, Cornell or title'});
   let rx=W-10;const tb=tokenBounce>0?Math.sin(tokenBounce*14)*tokenBounce*6:0;
   const tw2=tiny?50:56;rx-=tw2;bottomTrash={x:rx+tw2/2,y:y+h/2};
   const th=hoverId==='bb:trash'?1:0;drawTrashCan(rx+tw2/2,y+h/2-4,tiny?.38:.42,S.trash.length,th);hit(rx,y-8,tw2,h+8,{id:'bb:trash',cursor:'pointer',tip:'Trash can',click:openTrashModal});
@@ -1206,13 +1224,13 @@ function drawBottomBar(L){
 }
 
 /* ---------- page interaction ---------- */
-function textStyle(b){
-  const P=PAPERS[b.paper],base=P.lh,mult=[.5,.64,.9,1.25][T.tsize]||.64,size=Math.round(base*mult);
+function textStyle(b,p){
+  const pk=pagePaper(b,p||activePage()),P=PAPERS[pk],base=P.lh,mult=([.5,.64,.9,1.25][T.tsize]||.64)*(pk==='title'?1.3:1),size=Math.round(base*mult);
   const lh=P.snap?(T.tsize>=2?base*2:base):Math.round(size*1.45);
   return{size,lh,font:T.font||P.font||'hand'};
 }
 function createText(b,p,u,v){
-  const P=PAPERS[b.paper],ts=textStyle(b);let x=u,y=v+ts.lh*.3;
+  const P=PAPERS[pagePaper(b,p)],ts=textStyle(b,p);let x=u,y=v+ts.lh*.3;
   if(P.snap){const k=Math.max(0,Math.ceil((v-P.top+2)/P.lh));y=P.top+k*P.lh;}
   if(u<P.ml+24&&u>P.ml-60)x=P.ml+6;
   x=clamp(x,16,900);y=clamp(y,ts.lh*.8,1260);
@@ -1299,11 +1317,12 @@ function renderBookOverlays(L){
 }
 function drawFooters(L){
   for(const s of L.slots){const r=s.r;
-    if(!s.page){if(s.idx===curBook.pages.length)hit(r.x,r.y,r.w,r.h,{id:'ghost',cursor:'pointer',tip:'Add a new page',click:addPage});continue;}
+    if(!s.page){if(s.idx===curBook.pages.length)hit(r.x,r.y,r.w,r.h,{id:'ghost',cursor:'pointer',tip:'Add a new page',click:addPageMenu});continue;}
     const p=s.page,fs=clamp(r.w*.024,9,13),fy=r.y+r.h-fs*1.6,left=s.side==='L';
     ctx.font=`bold ${fs}px ${FONTS.neat}`;ctx.textBaseline='middle';ctx.fillStyle='rgba(90,70,50,.6)';ctx.textAlign=left?'left':'right';ctx.fillText(String(s.idx+1),left?r.x+r.w*.05:r.x+r.w*.95,fy);
     const bw=r.w*.32,bx=r.x+r.w/2-bw/2-fs;
-    if(p.done){ctx.textAlign='center';ctx.fillStyle='#2e7d32';ctx.fillText('✅ Game token earned!',r.x+r.w/2,fy);}
+    if(p.kind==='title'){ctx.textAlign='center';ctx.fillStyle='rgba(90,70,50,.6)';ctx.fillText('📘 Title page · not counted for games',r.x+r.w/2,fy);}
+    else if(p.done){ctx.textAlign='center';ctx.fillStyle='#2e7d32';ctx.fillText('✅ Game token earned!',r.x+r.w/2,fy);}
     else{const pr=clamp(pageScore(p)/GOAL,0,1);ctx.fillStyle='rgba(0,0,0,.08)';rr(ctx,bx,fy-fs*.35,bw,fs*.7,fs*.35);ctx.fill();ctx.fillStyle='#f6a821';if(pr>0){rr(ctx,bx,fy-fs*.35,Math.max(fs*.7,bw*pr),fs*.7,fs*.35);ctx.fill();}
       ctx.textAlign='left';ctx.fillStyle='rgba(90,70,50,.75)';ctx.fillText(`🎮 ${Math.floor(pr*100)}%`,bx+bw+6,fy);
       const stt=pageStats(p);if(stt.junk>=4&&stt.junk>stt.valid*.5){ctx.textAlign='center';ctx.fillStyle='#c62828';ctx.font=`bold ${fs}px ${FONTS.neat}`;ctx.fillText('🤔 Hmm, that doesn\'t look like notes. Real words only!',r.x+r.w/2,fy-fs*1.6);}
