@@ -138,7 +138,8 @@ function defaultPostits(){return[
  {id:uid(),text:'🌳 Take an outside break',color:'#a5d6a7',fx:.93,fy:.3,rot:3,remind:60},
  {id:uid(),text:'🧘 Stand up & stretch',color:'#f8bbd0',fx:.07,fy:.62,rot:2,remind:45}
 ];}
-function defaultState(){return{v:1,books:PRESETS.map(newBook),postits:defaultPostits(),tokens:0,earned:0,hi:{},trash:[],sound:true,showPostits:true,prefs:null,welcomed:false};}
+function presetBook(p){const b=newBook(p);b.preset=p.title;return b;}
+function defaultState(){return{v:1,books:PRESETS.map(presetBook),postits:defaultPostits(),tokens:0,earned:0,hi:{},trash:[],sound:true,showPostits:true,prefs:null,welcomed:false};}
 function loadState(){
   try{const s=localStorage.getItem(SAVE_KEY);if(s){const o=JSON.parse(s);if(o&&Array.isArray(o.books))S=o;}}catch(e){S=null;}
   normalizeState();
@@ -148,6 +149,7 @@ function normalizeState(){
   const d=defaultState();
   for(const k in d)if(S[k]===undefined)S[k]=d[k];
   for(const b of S.books){if(!b.pages||!b.pages.length)b.pages=[newPage()];b.cur=clamp(b.cur|0,0,b.pages.length-1);if(!PAPERS[b.paper])b.paper='lined';if(!b.diag)b.diag=[];}
+  for(const b of S.books)if(b.preset===undefined){const pr=PRESETS.find(x=>x.title.toLowerCase()===String(b.title).toLowerCase());b.preset=pr&&!S.books.some(o=>o!==b&&o.preset===pr.title)?pr.title:null;}
   if(!S.titlePages){for(const b of S.books)if(!b.pages[0]||b.pages[0].kind!=='title'){b.pages.unshift(newPage('title'));b.cur++;}S.titlePages=true;}
 }
 let saveTimer=null,savedAt=0,savePending=false,saveFailed=false;
@@ -894,8 +896,9 @@ function renderDesk(skip){
   const cx0=D.side?D.decor.x+18:W-100,cy0=D.side?22:16;
   btn(cx0,cy0,D.side?126:84,36,`🎮 ${S.tokens} token${S.tokens===1?'':'s'}`.replace(D.side?'':' tokens','').replace(D.side?'':' token',''),openDevice,{id:'tokchip',tip:'Game tokens — play the reward arcade',fs:14,bg:S.tokens?'#ffe08a':'#fdf6e3'});
   {const pct=storePct(),bg=pct>=.9?'#ef9a9a':pct>=.75?'#ffcc80':'#fdf6e3';
-   if(D.side)btn(cx0,cy0+42,178,30,`💾 Storage ${Math.round(pct*100)}% · backups`,()=>openStorageModal(),{id:'store',bg,fs:12,tip:'Storage space & backups'});
-   else btn(W-56,cy0+42,40,36,'💾',()=>openStorageModal(),{id:'store',bg,fs:16,tip:'Storage & backups'});}
+   if(D.side){btn(cx0,cy0+42,134,30,`💾 Storage ${Math.round(pct*100)}%`,()=>openStorageModal(),{id:'store',bg,fs:12,tip:'Storage space & backups'});
+     btn(cx0+140,cy0+42,38,30,'⚙️',(x,y)=>deskOptions(x,y),{id:'deskopt',fs:14,tip:'Desk options'});}
+   else btn(W-56,cy0+42,40,36,'⚙️',(x,y)=>deskOptions(x,y),{id:'deskopt',bg,fs:16,tip:'Desk options'});}
   btn(D.side?cx0+134:W-100,D.side?cy0:cy0+42,D.side?44:40,36,S.sound?'🔊':'🔇',()=>{S.sound=!S.sound;markDirty();ensureAudio();SFX.tap();},{id:'snd',tip:S.sound?'Mute sounds':'Unmute sounds',fs:16});
 }
 function deskScrollGesture(D){return(x,y)=>{const s0=deskScroll;return{move(nx,ny){deskScroll=clamp(s0-(ny-y),0,D.maxScroll);}};};}
@@ -916,6 +919,35 @@ function trashBook(b,it){
   const i=S.books.indexOf(b);if(i<0)return;S.books.splice(i,1);S.trash.unshift({kind:'book',book:b,t:Date.now()});trimTrash();markDirty();
   if(it)FX.push({type:'bookfly',img:coverImg(b),x:it.cx,y:it.cy,w:it.w,h:it.h,rot:it.rot,tx:deskTrashPos.x,ty:deskTrashPos.y-20,t:0,dur:.9});
   toast('🗑 Notebook thrown in the trash');
+}
+function deskOptions(x,y){openMenu(x-220,y+20,[
+  {label:`💾  Storage & backups (${Math.round(storePct()*100)}% used)`,fn:()=>openStorageModal()},
+  {label:'📚  Restore the default notebooks…',fn:restoreDefaultsModal},
+  {label:'📓  New notebook…',fn:()=>openNotebookModal(null)},
+  {label:S.sound?'🔇  Mute sounds':'🔊  Turn sounds on',fn:()=>{S.sound=!S.sound;markDirty();}}],'Desk');}
+const hasWriting=b=>b.pages.some(p=>p.items.length>0);
+function restoreDefaultsPlan(){
+  const keep=[],add=[],tidy=[],used=new Set();
+  for(const pr of PRESETS){const b=S.books.find(x=>x.preset===pr.title&&!used.has(x));if(b){used.add(b);keep.push(b);}else add.push(pr);}
+  const extras=S.books.filter(b=>!used.has(b));
+  return{keep,add,extrasKept:extras.filter(hasWriting),tidy:extras.filter(b=>!hasWriting(b))};
+}
+function restoreDefaultsModal(){
+  const pl=restoreDefaultsPlan();
+  if(!pl.add.length&&!pl.tidy.length){toast('📚 Your desk already has all the default notebooks!',3);return;}
+  const parts=[];
+  if(pl.add.length)parts.push(`Bring back ${pl.add.length} missing notebook${pl.add.length>1?'s':''} (${pl.add.slice(0,4).map(p=>p.title).join(', ')}${pl.add.length>4?'…':''}).`);
+  if(pl.tidy.length)parts.push(`Move ${pl.tidy.length} empty extra notebook${pl.tidy.length>1?'s':''} to the trash (you can restore ${pl.tidy.length>1?'them':'it'}).`);
+  parts.push(`Every notebook you've written in stays exactly as it is${pl.extrasKept.length?`, including ${pl.extrasKept.length} of your own`:''}.`);
+  modal={title:'📚 Restore default notebooks',w:480,h:280,draw(x,y,w,h){ctx.fillStyle='#5a4632';ctx.font=`15px ${FONTS.neat}`;ctx.textAlign='left';ctx.textBaseline='top';let yy=y+58;
+    for(const t of parts)yy=wrapScreen('• '+t,x+20,yy,w-40,20)+6;
+    btn(x+w-140,y+h-56,120,38,'Restore',()=>{closeModal();restoreDefaults();},{bg:'#f6a821',color:'#fff'});btn(x+w-260,y+h-56,110,38,'Cancel',closeModal);}};
+}
+function restoreDefaults(){
+  const pl=restoreDefaultsPlan(),fresh=new Map(pl.add.map(pr=>[pr.title,presetBook(pr)]));
+  for(const b of pl.tidy)S.trash.unshift({kind:'book',book:b,t:Date.now()});trimTrash();
+  S.books=[...PRESETS.map(pr=>pl.keep.find(b=>b.preset===pr.title)||fresh.get(pr.title)),...pl.extrasKept];
+  markDirty();deskScroll=0;SFX.win();toast(`📚 Default notebooks restored${pl.add.length?` (+${pl.add.length})`:''} — your notes are safe`,3.2);
 }
 function trimTrash(){while(S.trash.length>20)S.trash.pop();}
 function openTrashModal(){
