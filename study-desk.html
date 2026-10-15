@@ -583,10 +583,17 @@ const UNDO=new Map();
 function undoStack(p){let s=UNDO.get(p.id);if(!s){s={u:[],r:[]};UNDO.set(p.id,s);}return s;}
 function snapItems(p){return p.items.map(o=>({...o}));}
 function pushUndo(p,snap){const s=undoStack(p);s.u.push(snap||snapItems(p));if(s.u.length>60)s.u.shift();s.r.length=0;}
+function applyUndo(p,redo){
+  const s=undoStack(p),from=redo?s.r:s.u,to=redo?s.u:s.r;if(!from.length)return null;
+  const snap=from.pop(),cur=snapItems(p);if(snap.tag){cur.tag=snap.tag;cur.pair=snap.pair;}
+  to.push(cur);p.items=snap;invalidateInk(p);return snap;
+}
 function doUndo(p,redo){
-  if(!p)return;endEdit();const s=undoStack(p),from=redo?s.r:s.u,to=redo?s.u:s.r;
-  if(!from.length){SFX.nope();return;}
-  to.push(snapItems(p));p.items=from.pop();sel=null;hiddenItem=null;invalidateInk(p);markDirty();SFX.tap();
+  if(!p)return;endEdit();const snap=applyUndo(p,redo);
+  if(!snap){SFX.nope();return;}
+  if(snap.tag&&snap.pair){   // a move between two pages: undo/redo both pages together
+    const os=undoStack(snap.pair),arr=redo?os.r:os.u;if(arr.length&&arr[arr.length-1].tag===snap.tag)applyUndo(snap.pair,redo);}
+  sel=null;hiddenItem=null;markDirty();SFX.tap();
 }
 
 /* ---------- reward logic ---------- */
@@ -1200,7 +1207,7 @@ function toolOptions(){
     case 'shape':SHAPES.forEach(([k,n])=>o.push({t:'shape',k,n}));sep();cols(PALETTE.slice(0,8),'shape');sep();sizes('shape');break;
     case 'sticker':STICKERS.forEach(ch=>o.push({t:'sticker',ch}));break;
     case 'diagram':{const pref=(curBook.diag||[]).filter(k=>DIAGRAMS[k]);const rest=Object.keys(DIAGRAMS).filter(k=>!pref.includes(k));pref.forEach(k=>o.push({t:'diagram',k}));if(pref.length)sep();rest.forEach(k=>o.push({t:'diagram',k}));break;}
-    case 'move':o.push({t:'label',s:sel?'Selected:':'Tap an item to select it'});if(sel){o.push({t:'btn',s:'⬆ To front',fn:()=>{const p=sel.p,i=p.items.indexOf(sel.it);if(i>=0){pushUndo(p);p.items.splice(i,1);p.items.push(sel.it);invalidateInk(p);markDirty();}}});o.push({t:'btn',s:'🗑 Delete',fn:deleteSel});}break;
+    case 'move':o.push({t:'label',s:sel?'Selected:':'Tap an item to select it'});if(sel){o.push({t:'btn',s:'⬆ To front',fn:()=>{const p=sel.p,i=p.items.indexOf(sel.it);if(i>=0){pushUndo(p);p.items.splice(i,1);p.items.push(sel.it);invalidateInk(p);markDirty();}}});o.push({t:'btn',s:'⬅ Prev page',fn:()=>moveSelToPage(-1)});o.push({t:'btn',s:'Next page ➡',fn:()=>moveSelToPage(1)});o.push({t:'btn',s:'🗑 Delete',fn:deleteSel});}break;
   }
   return o;
 }
@@ -1385,18 +1392,39 @@ function pageDown(slot,x,y,e){
     const now=performance.now();
     if(it.type==='text'&&lastTap.it===it&&now-lastTap.t<450){sel=null;lastTap={it:null,t:0};return{up(){beginEdit(b,p,it,false,textIndexAt(it,u,v));}};}
     lastTap={it,t:now};sel={p,it};const o={...it};let started=false;
-    return{move(nx,ny){const[u2,v2]=toU(nx,ny),du=u2-u,dv=v2-v;if(!started){if(Math.hypot(du,dv)<3)return;started=true;pushUndo(p);hiddenItem=it;invalidateInk(p);}moveItem(it,o,Math.round(du),Math.round(dv));},
-      up(){if(started){hiddenItem=null;invalidateInk(p);markDirty();}}};
+    return{move(nx,ny){const[u2,v2]=toU(nx,ny),du=u2-u,dv=v2-v;if(!started){if(Math.hypot(du,dv)<3)return;started=true;pushUndo(p);hiddenItem=it;dragItem={p,r};invalidateInk(p);}moveItem(it,o,Math.round(du),Math.round(dv));},
+      up(ux,uy){if(!started)return;hiddenItem=null;dragItem=null;
+        // dropped on the other page of the spread? move it there
+        const tgt=LAY&&LAY.slots.find(sl=>sl.page&&sl.page!==p&&inR(ux,uy,sl.r));
+        if(tgt){const dx=(r.x-tgt.r.x)*PW/r.w,dy=(r.y-tgt.r.y)*PH/r.h,cur={...it};moveItem(it,cur,Math.round(dx),Math.round(dy));transferItem(p,tgt.page,it);activeIdx=tgt.idx;}
+        else invalidateInk(p);markDirty();}};
   }
   return null;
 }
 function L_SINGLE(){return LAY&&!LAY.spread;}
 function slotTransform(r){ctx.translate(r.x,r.y);ctx.scale(r.w/PW,r.h/PH);}
+let dragItem=null;
+function transferItem(from,to,it){
+  const i=from.items.indexOf(it);if(i<0)return;const tag=uid(),a=snapItems(from),c=snapItems(to);a.tag=c.tag=tag;a.pair=to;c.pair=from;pushUndo(from,a);pushUndo(to,c);from.items.splice(i,1);to.items.push(it);
+  invalidateInk(from);invalidateInk(to);sel={p:to,it};checkReward(curBook,to);markDirty();SFX.pop();
+}
+function moveSelToPage(dir){
+  if(!sel)return;const b=curBook,from=sel.p,fi=b.pages.indexOf(from),ti=fi+dir;
+  if(ti<0){toast('There is no page before this one');SFX.nope();return;}
+  if(ti>=b.pages.length){b.pages.push(newPage());toast('📄 Added a new page for it');}
+  const it=sel.it;transferItem(from,b.pages[ti],it);activeIdx=ti;
+  toast(`➡️ Moved to page ${ti+1}`,1.6);
+  const L=bookLayout();if(!L.slots.some(s=>s.idx===ti))goPage(L.spread?ti:ti);sel={p:b.pages[ti],it};
+}
 function renderBookOverlays(L){
+  if(dragItem&&hiddenItem){const r=dragItem.r,a=L.slots.filter(s=>s.page);const x0=Math.min(...a.map(s=>s.r.x)),x1=Math.max(...a.map(s=>s.r.x+s.r.w));
+    ctx.save();ctx.beginPath();ctx.rect(x0,r.y,x1-x0,r.h);ctx.clip();slotTransform(r);ctx.globalAlpha=.9;drawItem(ctx,hiddenItem,curBook);ctx.restore();
+    const over=L.slots.find(s=>s.page&&s.page!==dragItem.p&&inR(ptr.x,ptr.y,s.r));
+    if(over){ctx.save();ctx.strokeStyle='#f6a821';ctx.lineWidth=4;ctx.setLineDash([12,8]);ctx.strokeRect(over.r.x+6,over.r.y+6,over.r.w-12,over.r.h-12);ctx.restore();}}
   for(const s of L.slots){if(!s.page)continue;const p=s.page,r=s.r;
     ctx.save();ctx.beginPath();ctx.rect(r.x,r.y,r.w,r.h);ctx.clip();slotTransform(r);
     if(live&&live.p===p&&live.it.tool!=='eraser')drawItem(ctx,live.it,curBook);
-    if(hiddenItem&&p.items.includes(hiddenItem)&&(!edit||edit.item!==hiddenItem))drawItem(ctx,hiddenItem,curBook);
+    if(hiddenItem&&!dragItem&&p.items.includes(hiddenItem)&&(!edit||edit.item!==hiddenItem))drawItem(ctx,hiddenItem,curBook);
     if(edit&&edit.p===p){const it=edit.item,s0=TI.selectionStart,e0=TI.selectionEnd;const lines=drawTextItem(ctx,it,{s:s0,e:e0});
       ctx.save();ctx.setLineDash([8,7]);ctx.strokeStyle='rgba(246,168,33,.6)';ctx.lineWidth=2;ctx.strokeRect(it.x-8,it.y-it.lh*.85,it.w+16,lines.length*it.lh+it.lh*.15);ctx.restore();
       const k=TI.selectionDirection==='backward'?s0:e0,cp=caretPos(it,lines,k);
