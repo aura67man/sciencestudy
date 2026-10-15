@@ -1212,7 +1212,7 @@ function clickOpt(c){
     case 'color':T.color[c.key]=c.c;if(edit&&c.key==='text'){edit.item.color=c.c;}break;
     case 'size':T.size[c.key]=c.i;break;
     case 'font':T.font=c.k;if(edit){edit.item.font=c.k;}break;
-    case 'tsize':T.tsize=c.i;if(edit){const ts=textStyle(curBook,edit.p);edit.item.size=ts.size;edit.item.lh=ts.lh;}break;
+    case 'tsize':T.tsize=c.i;if(edit){const zs=zonesFor(pagePaper(curBook,edit.p)),ts=textStyle(curBook,edit.p,zs.find(z=>z.id===edit.item.zone)||zs[0]);edit.item.size=ts.size;edit.item.lh=ts.lh;}break;
     case 'shape':T.shape=c.k;break;
     case 'sticker':T.sticker=c.ch;break;
     case 'diagram':T.diagram=c.k;toast(`Tap the page to place a ${DIAGRAMS[c.k]}`,1.6);break;
@@ -1291,20 +1291,50 @@ function drawBottomBar(L){
 }
 
 /* ---------- page interaction ---------- */
-function textStyle(b,p){
-  const pk=pagePaper(b,p||activePage()),P=PAPERS[pk],base=P.lh,mult=([.5,.64,.9,1.25][T.tsize]||.64)*(pk==='title'?1.3:1),size=Math.round(base*mult);
-  const lh=P.snap?(T.tsize>=2?base*2:base):Math.round(size*1.45);
-  return{size,lh,font:T.font||P.font||'hand'};
+/* writing areas: where text is allowed to sit on each kind of paper (page units) */
+const ZONES={
+  title:[{id:'topic',x:130,top:600,w:740,lh:60,hit:[50,470,950,930],scale:1.3},
+         {id:'name',x:262,top:1020,w:590,lh:70,hit:[50,930,950,1050],one:1},
+         {id:'class',x:262,top:1090,w:590,lh:70,hit:[50,1050,950,1120],one:1},
+         {id:'date',x:262,top:1160,w:590,lh:70,hit:[50,1120,950,1250],one:1}],
+  lined:[{id:'date',x:828,top:86,w:150,lh:40,hit:[720,30,1000,108],one:1}],
+  cornell:[{id:'notes',x:306,top:160,w:670,lh:40,hit:[280,90,1000,1040]},{id:'cues',x:14,top:160,w:258,lh:40,hit:[0,90,280,1040]},
+           {id:'summary',x:20,top:1140,w:955,lh:40,hit:[0,1040,1000,1300]},{id:'topic',x:98,top:84,w:600,lh:40,hit:[0,0,700,90],one:1},{id:'date',x:790,top:84,w:190,lh:40,hit:[700,0,1000,90],one:1}],
+  ledger:[{id:'details',x:156,top:160,w:478,lh:40,hit:[147,60,640,1300]},{id:'date',x:8,top:160,w:128,lh:40,hit:[0,60,147,1300]},
+          {id:'debit',x:650,top:160,w:144,lh:40,hit:[640,60,800,1300]},{id:'credit',x:810,top:160,w:144,lh:40,hit:[800,60,960,1300]}],
+  script:[{id:'lines',x:262,top:140,w:712,lh:40,hit:[250,0,1000,1300]},{id:'char',x:14,top:140,w:228,lh:40,hit:[0,0,250,1300]}]
+};
+function zonesFor(pk){
+  const P=PAPERS[pk]||PAPERS.lined,main={id:'main',x:P.ml+6,top:P.top,w:Math.max(200,975-(P.ml+6)),lh:P.lh,hit:[0,0,PW,PH],free:!P.snap};
+  const z=ZONES[pk];if(!z)return[main];
+  return pk==='lined'?[main,...z]:z;   // first zone = the page's main writing area
 }
+function zoneAt(zs,u,v){for(let i=zs.length-1;i>=0;i--){const h=zs[i].hit;if(u>=h[0]&&u<=h[2]&&v>=h[1]&&v<=h[3])return zs[i];}return zs[0];}
+function textStyle(b,p,zone){
+  const pk=pagePaper(b,p||activePage()),P=PAPERS[pk],z=zone||zonesFor(pk)[0],base=z.lh,size0=Math.round(P.lh*([.5,.64,.9,1.25][T.tsize]||.64)*(z.scale||1));
+  if(z.one)return{size:Math.min(size0,Math.round(base*.62)),lh:base,font:T.font||P.font||'hand'};
+  const lh=z.free?Math.round(size0*1.45):(T.tsize>=2?base*2:base);
+  return{size:size0,lh,font:T.font||P.font||'hand'};
+}
+function zoneBlock(p,zs,z){return p.items.find(q=>q.type==='text'&&(q.zone===z.id||(!q.zone&&q.main&&z===zs[0])));}
 function createText(b,p,u,v,fixed){
-  const P=PAPERS[pagePaper(b,p)],ts=textStyle(b,p);
-  if(fixed){u=P.ml+6;v=P.snap?P.top-2:P.top;}
-  let x=u,y=v+ts.lh*.3;
-  if(P.snap){const k=Math.max(0,Math.ceil((v-P.top+2)/P.lh));y=P.top+k*P.lh;}
-  if(u<P.ml+24&&u>P.ml-60)x=P.ml+6;
-  x=clamp(x,16,900);y=clamp(y,ts.lh*.8,1260);
-  const snap=snapItems(p),item={type:'text',x:Math.round(x),y:Math.round(y),w:Math.max(100,Math.round(975-x)),text:'',font:ts.font,size:ts.size,lh:ts.lh,color:T.color.text};
-  if(P.dy!=null)item.dy=P.dy;if(fixed)item.main=1;p.items.push(item);beginEdit(b,p,item,true,0,snap);
+  const pk=pagePaper(b,p),P=PAPERS[pk],zs=zonesFor(pk),z=zoneAt(zs,u,v),ts=textStyle(b,p,z);
+  let x,y;
+  if(fixed||z.one){x=z.x;y=z.free?z.top+ts.size:z.top;}
+  else{
+    x=u<z.x+40?z.x:Math.min(u,z.x+z.w-120);
+    if(z.free)y=clamp(v+ts.size*.35,z.top,1250);
+    else{const k=Math.max(0,Math.ceil((v-z.top+2)/z.lh));y=Math.min(z.top+k*z.lh,1240);}
+  }
+  const snap=snapItems(p),item={type:'text',x:Math.round(x),y:Math.round(y),w:Math.max(100,Math.round(z.x+z.w-x)),text:'',font:ts.font,size:ts.size,lh:ts.lh,color:T.color.text,zone:z.id};
+  if(P.dy!=null)item.dy=P.dy;if(fixed||z.one)item.main=1;p.items.push(item);beginEdit(b,p,item,true,0,snap);
+}
+function textTap(b,p,u,v,it){
+  // decide where a tap with the text tool should type
+  if(it&&p.items.includes(it)){beginEdit(b,p,it,false,textIndexAt(it,u,v));return;}
+  const pk=pagePaper(b,p),zs=zonesFor(pk),z=zoneAt(zs,u,v);
+  if(T.fixedStart||z.one){const m=zoneBlock(p,zs,z);if(m){beginEdit(b,p,m,false,m.text.length);return;}createText(b,p,u,v,true);return;}
+  createText(b,p,u,v,false);
 }
 function beginEdit(b,p,item,isNew,caret,snap){
   endEdit();blurField();edit={b,p,item,isNew,snap:snap||snapItems(p),orig:isNew?'':item.text};hiddenItem=item;invalidateInk(p);
@@ -1334,9 +1364,7 @@ function pageDown(slot,x,y,e){
     const it=topItemAt(p,u,v,['text']);
     if(edit&&edit.item===it){const k=textIndexAt(it,u,v);try{TI.setSelectionRange(k,k);}catch(_){}TI.focus({preventScroll:true});caretT=performance.now();
       return{move(nx,ny){const[u2,v2]=toU(nx,ny),k2=textIndexAt(it,u2,v2);try{TI.setSelectionRange(Math.min(k,k2),Math.max(k,k2),k2<k?'backward':'forward');}catch(_){}}};}
-    return{up(ux,uy){if(Math.hypot(ux-x,uy-y)>20)return;endEdit();if(it&&p.items.includes(it))beginEdit(b,p,it,false,textIndexAt(it,u,v));
-      else if(T.fixedStart){const m=p.items.find(q=>q.type==='text'&&q.main);if(m)beginEdit(b,p,m,false,m.text.length);else createText(b,p,0,0,true);}
-      else createText(b,p,u,v);}};
+    return{up(ux,uy){if(Math.hypot(ux-x,uy-y)>20)return;endEdit();textTap(b,p,u,v,it);}};
   }
   if(tool==='shape'){
     const it={type:'shape',kind:T.shape,color:T.color.shape,size:SIZES.shape[T.size.shape],x1:Math.round(u),y1:Math.round(v),x2:Math.round(u),y2:Math.round(v)};live={it,p};
